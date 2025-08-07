@@ -3,6 +3,8 @@
  */
 #include "needleman_wunsch.h"
 #include "hashmap.h"
+#include "WFA2/wavefront_align.h"
+#include <pthread.h>
 #ifndef _GLOBAL_
 #define _GLOBAL_
 
@@ -73,12 +75,38 @@ typedef struct resultsStruct{
 	int numassigned;
 	int* clusterNumber;
 	double average;
-	int* savedForNewClusters;
+	int* savedForNewClusters; // was char** (incorrect). Holds indices; -1 sentinel for empty.
 	int numunassigned;
 	int number_of_clusters;
 	int* clusterSizes;
 	char buffer[99999];
 }resultsStruct;
+
+// Forward declarations for performance optimization types
+typedef struct wfa_thread_context {
+    wavefront_aligner_t* wf_aligner;
+    char* pattern_alg;
+    char* text_alg;
+    char* ops_alg;
+    int   buf_capacity;
+    int   data_capacity;   // current columns capacity for DATA/mult
+    int** data_buf;        // pooled DATA[2]
+    int*  mult_buf;        // pooled mult array
+} wfa_thread_context;
+
+// Work queue item for dynamic scheduling of pairwise distances
+typedef struct dist_work_item {
+    int i;
+    int j_start;
+    int j_end; // inclusive
+} dist_work_item;
+
+typedef struct dist_work_queue {
+    dist_work_item* items;
+    int count;
+    int next; // atomic index
+    pthread_mutex_t lock; // simple mutex (could be replaced with atomic)
+} dist_work_queue;
 
 typedef struct mystruct{
 	int start;
@@ -98,15 +126,13 @@ typedef struct mystruct{
 	char** sequences;
 	char** taxonomy;
 	int threadnumber;
-	//struct hashmap seqsToCompare;
-	//struct hashmap assignedSeqs;
-	//char** assignedSeqs;
 	resultsStruct *str;
 	int numAssigned;
 	char buffer[9999];
 	int use_nw;
 	int *skipped;
 	int iteration;
+	wfa_thread_context* wfa_ctx; // new per-thread reusable WFA context
 }mystruct;
 
 typedef struct distStruct{

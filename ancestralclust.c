@@ -16,6 +16,101 @@
 #include "WFA2/wavefront_align.h"
 #include "performance.h"
 
+// --- Added reusable WFA context helpers ---
+
+static wfa_thread_context* wfa_thread_context_create(int initial_capacity){
+	wfa_thread_context* ctx = (wfa_thread_context*)malloc(sizeof(wfa_thread_context));
+	if(!ctx) return NULL;
+	wavefront_aligner_attr_t attributes = wavefront_aligner_attr_default;
+	attributes.distance_metric = gap_affine;
+	attributes.affine_penalties.mismatch =4;
+	attributes.affine_penalties.gap_opening = 6;
+	attributes.affine_penalties.gap_extension = 2;
+	attributes.alignment_form.span = alignment_endsfree;
+	ctx->wf_aligner = wavefront_aligner_new(&attributes);
+	ctx->buf_capacity = initial_capacity;
+	ctx->pattern_alg = (char*)malloc(initial_capacity);
+	ctx->text_alg = (char*)malloc(initial_capacity);
+	ctx->ops_alg = (char*)malloc(initial_capacity);
+	ctx->data_capacity = initial_capacity;
+	ctx->data_buf = (int**)malloc(2*sizeof(int*));
+	ctx->data_buf[0] = (int*)malloc(initial_capacity*sizeof(int));
+	ctx->data_buf[1] = (int*)malloc(initial_capacity*sizeof(int));
+	ctx->mult_buf = (int*)malloc(initial_capacity*sizeof(int));
+	return ctx;
+}
+static void wfa_thread_context_reserve(wfa_thread_context* ctx,int needed){
+	if(needed <= ctx->buf_capacity) return;
+	int newcap = ctx->buf_capacity;
+	while(newcap < needed) newcap *=2;
+	ctx->pattern_alg = (char*)realloc(ctx->pattern_alg,newcap);
+	ctx->text_alg = (char*)realloc(ctx->text_alg,newcap);
+	ctx->ops_alg = (char*)realloc(ctx->ops_alg,newcap);
+	ctx->buf_capacity = newcap;
+	if(newcap > ctx->data_capacity){
+		ctx->data_buf[0] = (int*)realloc(ctx->data_buf[0],newcap*sizeof(int));
+		ctx->data_buf[1] = (int*)realloc(ctx->data_buf[1],newcap*sizeof(int));
+		ctx->mult_buf = (int*)realloc(ctx->mult_buf,newcap*sizeof(int));
+		ctx->data_capacity = newcap;
+	}
+}
+static void wfa_thread_context_destroy(wfa_thread_context* ctx){
+	if(!ctx) return;
+	wavefront_aligner_delete(ctx->wf_aligner);
+	free(ctx->pattern_alg); free(ctx->text_alg); free(ctx->ops_alg);
+	free(ctx->data_buf[0]); free(ctx->data_buf[1]); free(ctx->data_buf); free(ctx->mult_buf);
+	free(ctx);
+}
+
+// --- Dynamic work queue helpers ---
+static void dist_work_queue_init(dist_work_queue* q,int n){
+	// create one work item per i row chunk (simple: each i has one item spanning j=i+1..n-1)
+	q->items = (dist_work_item*)malloc(sizeof(dist_work_item)*n);
+	q->count = 0; q->next = 0; pthread_mutex_init(&q->lock,NULL);
+	for(int i=0;i<n;i++){
+		if(i==n-1) continue; // last row has no pairs
+		q->items[q->count].i = i;
+		q->items[q->count].j_start = i+1;
+		q->items[q->count].j_end = n-1;
+		q->count++;
+	}
+}
+static int dist_work_queue_fetch(dist_work_queue* q,dist_work_item* out){
+	pthread_mutex_lock(&q->lock);
+	if(q->next >= q->count){ pthread_mutex_unlock(&q->lock); return 0; }
+	*out = q->items[q->next++];
+	pthread_mutex_unlock(&q->lock);
+	return 1;
+}
+static void dist_work_queue_destroy(dist_work_queue* q){
+	free(q->items); pthread_mutex_destroy(&q->lock);
+}
+
+// --- Simple k-mer mismatch prefilter (abort if too dissimilar) ---
+static int quick_kmer_screen(const char* a,const char* b,int k,int max_mismatches){
+	int la=strlen(a), lb=strlen(b);
+	int lim = la < lb ? la : lb;
+	if(lim < k) return 1; // force align small
+	int mism=0;
+	for(int i=0;i<=lim-k;i+=k){
+		for(int j=0;j<k;j++) if(a[i+j]!=b[i+j]){ mism++; break; }
+		if(mism>max_mismatches) return 0; // reject (too different)
+	}
+	return 1; // ok
+}
+
+// Work queue for distance matrix (step 3). Simple static scheduling improvement placeholder.
+typedef struct dist_task { int i; int j_start; int j_end; } dist_task;
+static void schedule_dist_tasks(int n, int threads, dist_task* tasks){
+	// Split upper triangle rows across threads roughly evenly
+	int t=0; int i=0; int rows_per=(n+threads-1)/threads; int assigned=0;
+	while(i<n){
+		int take = rows_per; if(i+take>n) take = n-i;
+		tasks[t].i = i; tasks[t].j_start = i+1; tasks[t].j_end = i+take; // inclusive row range; j handled in thread logic
+		i += take; t++; if(t>=threads) break; assigned = i;
+	}
+}
+
 //struct hashmap map;
 char*** clusters;
 //char** seqNames;
@@ -572,14 +667,29 @@ int countNumInCluster(int index, int kseqs){
 	return j+1;
 }
 void allocateMemForTreeArr(int numberOfClusters, int* clusterSize, node** treeArr, int kseqs){
-	int i,j;
-	treeArr=(node **)malloc(numberOfClusters*sizeof(node *));
-	for(i=0; i<numberOfClusters; i++){
-		treeArr[i]=malloc((2*kseqs-1)*sizeof(node));
-		for(j=0; j<2*kseqs-1; j++){
-			treeArr[i][j].name = (char *)malloc(MAXNAME*sizeof(char));
+	// Deprecated: original function shadowed global treeArr and leaked memory. Use allocateTreeArray and freeTreeArray instead.
+}
+node** allocateTreeArray(int numberOfClusters,int kseqs){
+	node** loc = (node**)malloc(numberOfClusters*sizeof(node*));
+	for(int i=0;i<numberOfClusters;i++){
+		loc[i]=(node*)calloc((2*kseqs-1),sizeof(node));
+		for(int j=0;j<2*kseqs-1;j++){
+			loc[i][j].name = (char*)malloc(MAXNAME*sizeof(char));
+			loc[i][j].name[0]='\0';
 		}
 	}
+	return loc;
+}
+void freeTreeArray(node** arr,int numberOfClusters,int kseqs){
+	if(!arr) return;
+	for(int i=0;i<numberOfClusters;i++){
+		if(!arr[i]) continue;
+		for(int j=0;j<2*kseqs-1;j++){
+			free(arr[i][j].name);
+		}
+		free(arr[i]);
+	}
+	free(arr);
 }
 void *fillInMat_avg(void *ptr){
 	struct distStruct_Avg *dstr = (distStruct_Avg *) ptr;
@@ -1699,20 +1809,35 @@ void freeMemForDistMat(int* clusterSizes, int largestCluster, double** distMat){
 	free(distMat);
 }
 void allocateMemForResults( resultsStruct *results, int sizeOfChunk, int num_threads, int number_of_clusters, double average, int* fasta_specs){
-	int i,j;
-	results->accession = (char **)malloc((sizeOfChunk)*sizeof(char *));
-	results->savedForNewClusters = (char **)malloc((sizeOfChunk)*sizeof(char *));
-	for(i=0; i<sizeOfChunk; i++){
-		results->accession[i] = malloc((fasta_specs[2]+1)*sizeof(char));
-		results->savedForNewClusters[i] = malloc((fasta_specs[2]+1)*sizeof(char));
-		results->clusterNumber=-1;
-		memset(results->accession[i],'\0',fasta_specs[2]+1);
-		memset(results->savedForNewClusters[i],'\0',fasta_specs[2]+1);
+	// Rewritten: correct types and initialization
+	results->accession = (char **)malloc(sizeOfChunk*sizeof(char *));
+	for(int i=0;i<sizeOfChunk;i++){
+		results->accession[i] = (char*)malloc((fasta_specs[2]+1)*sizeof(char));
+		results->accession[i][0]='\0';
 	}
-	results->clusterNumber = malloc(sizeOfChunk*sizeof(int));
+	results->clusterNumber = (int*)malloc(sizeOfChunk*sizeof(int));
+	results->savedForNewClusters = (int*)malloc(sizeOfChunk*sizeof(int));
+	for(int i=0;i<sizeOfChunk;i++){
+		results->clusterNumber[i] = -1;
+		results->savedForNewClusters[i] = -1; // sentinel empty
+	}
 	results->average = average;
 	results->number_of_clusters = number_of_clusters;
-	results->clusterSizes = (int *)malloc((fasta_specs[4]+1)*sizeof(int));
+	// Using fasta_specs[4] previously (ensure bounds). Defensive allocation fallback if zero.
+	int cap = fasta_specs[4] > 0 ? (fasta_specs[4]+1) : (number_of_clusters+1);
+	results->clusterSizes = (int*)malloc(cap*sizeof(int));
+	for(int i=0;i<cap;i++) results->clusterSizes[i]=0;
+}
+
+static void freeResults(resultsStruct* r,int sizeOfChunk){
+	if(!r) return;
+	if(r->accession){
+		for(int i=0;i<sizeOfChunk;i++) free(r->accession[i]);
+		free(r->accession);
+	}
+	free(r->clusterNumber);
+	free(r->savedForNewClusters);
+	free(r->clusterSizes);
 }
 void saveForLater(int index, resultsStruct *results, int sizeOfChunk, int iteration, int* assigned, int* fasta_specs, int kseqs, int* skipped){
 	int i;
