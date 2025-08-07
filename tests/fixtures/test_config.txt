@@ -1,0 +1,20 @@
+# AncestralClust Test Configuration File
+# Used for integration testing of performance logging system
+
+# Performance monitoring settings
+performance_enabled=1
+performance_granularity=medium
+performance_output_format=csv
+performance_track_memory=1
+performance_track_cpu=1
+performance_track_threads=1
+performance_flush_immediately=0
+
+# Algorithm parameters for testing
+max_iterations=10
+convergence_threshold=0.001
+thread_count=2
+
+# Output settings
+verbose_output=0
+debug_mode=0

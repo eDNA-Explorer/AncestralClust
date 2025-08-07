@@ -1,0 +1,42 @@
+# Expected CSV Output Pattern for AncestralClust Performance Logging
+# This file documents the expected structure and content of CSV performance logs
+
+# CSV Header (exact match required):
+timestamp,milestone,duration_ms,memory_rss_kb,memory_virt_kb,thread_count,iteration,convergence_metric,cpu_percent,label,context
+
+# Expected Milestone Sequence (logical order):
+# 1. PROGRAM_START - Program initialization
+# 2. OPTION_PARSING - Command line argument processing  
+# 3. FASTA_LOAD_START - Begin FASTA file loading
+# 4. FASTA_LOAD_END - Complete FASTA file loading
+# 5. DISTANCE_MATRIX_START - Begin distance calculation
+# 6. DISTANCE_CALCULATION - Individual distance computations
+# 7. DISTANCE_MATRIX_END - Complete distance matrix
+# 8. CLUSTERING_START - Begin clustering algorithm
+# 9. CLUSTERING_ITERATION - Individual clustering iterations
+# 10. CLUSTERING_END - Complete clustering
+# 11. OUTPUT_WRITE - Write results to file
+# 12. PROGRAM_END - Program completion
+
+# Expected Data Ranges:
+# - timestamp: Unix timestamp with nanosecond precision
+# - duration_ms: 0.0 to 60000.0 (reasonable for test runs)
+# - memory_rss_kb: 1000 to 100000 (1MB to 100MB for test data)
+# - memory_virt_kb: >= memory_rss_kb
+# - thread_count: 1 to 64 (reasonable thread counts)
+# - iteration: 0 to max_iterations (algorithm dependent)
+# - convergence_metric: 0.0 to 1.0 (typically)
+# - cpu_percent: 0.0 to 1000.0 (multi-core can exceed 100%)
+
+# Required Milestones (must be present):
+# - PROGRAM_START
+# - PROGRAM_END  
+# - At least one FASTA_LOAD milestone
+# - At least one distance calculation milestone
+
+# Sample CSV Data Lines:
+# 1673025600.123456789,PROGRAM_START,0.0,2048,4096,1,0,0.0,0.0,"","initialization"
+# 1673025600.125000000,FASTA_LOAD_START,1.5,2048,4096,1,0,0.0,15.2,"small_test.fasta","loading"
+# 1673025600.130000000,DISTANCE_CALCULATION,4.2,2560,4096,2,0,0.0,45.8,"pairwise","seq1_vs_seq2"
+# 1673025600.145000000,CLUSTERING_ITERATION,10.5,3072,4096,2,1,0.85,62.1,"k-means","iteration_1"
+# 1673025600.200000000,PROGRAM_END,55.0,2048,4096,1,0,0.0,5.2,"","cleanup"

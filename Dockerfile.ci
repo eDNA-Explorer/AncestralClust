@@ -1,0 +1,259 @@
+# Dockerfile.ci
+# Comprehensive CI/CD Docker Image for AncestralClust Testing
+# 
+# This Docker image provides a complete testing environment for continuous integration
+# and automated testing of the AncestralClust performance logging system.
+# 
+# Features:
+# - Ubuntu 20.04 LTS base for consistency
+# - Complete build environment (GCC, OpenMP, zlib)
+# - Test coverage tools (lcov, gcov)
+# - Performance measurement tools
+# - Automated test execution and reporting
+# - CI/CD pipeline integration support
+# 
+# Usage:
+#   docker build -f Dockerfile.ci -t ancestralclust-ci .
+#   docker run --rm -v $(pwd)/ci-results:/app/results ancestralclust-ci
+#   docker run --rm ancestralclust-ci ./tests/scripts/run_all_tests.sh --coverage
+
+FROM ubuntu:20.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Set locale to avoid encoding issues
+ENV LANG=C.UTF-8
+ENV LC_ALL=C.UTF-8
+
+# Install comprehensive development and testing dependencies
+RUN apt-get update && apt-get install -y \
+    # Core build tools
+    build-essential \
+    gcc \
+    g++ \
+    make \
+    cmake \
+    libc6-dev \
+    # OpenMP support
+    libomp-dev \
+    # Required libraries
+    zlib1g-dev \
+    libpthread-stubs0-dev \
+    # Coverage analysis tools
+    lcov \
+    gcov \
+    # Performance analysis tools
+    valgrind \
+    gdb \
+    strace \
+    # Utilities for CI/CD
+    bc \
+    curl \
+    wget \
+    git \
+    unzip \
+    # Text processing for test analysis
+    jq \
+    xmlstarlet \
+    # Time measurement utilities
+    time \
+    # Cleanup
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user for testing (security best practice)
+RUN groupadd -r testuser && useradd -r -g testuser -m testuser
+
+# Set working directory
+WORKDIR /app
+
+# Copy source code with proper ownership
+COPY --chown=testuser:testuser . .
+
+# Create fallback mm_malloc.h for compatibility
+RUN echo '#ifndef _MM_MALLOC_H_INCLUDED' > /usr/include/mm_malloc.h && \
+    echo '#define _MM_MALLOC_H_INCLUDED' >> /usr/include/mm_malloc.h && \
+    echo '#include <malloc.h>' >> /usr/include/mm_malloc.h && \
+    echo '#define _mm_malloc(size, alignment) malloc(size)' >> /usr/include/mm_malloc.h && \
+    echo '#define _mm_free(ptr) free(ptr)' >> /usr/include/mm_malloc.h && \
+    echo '#endif' >> /usr/include/mm_malloc.h
+
+# Create results directory with proper permissions
+RUN mkdir -p /app/results && chown -R testuser:testuser /app/results
+
+# Make test scripts executable
+RUN chmod +x /app/tests/scripts/*.sh
+
+# Switch to non-root user
+USER testuser
+
+# Build the application with performance logging
+RUN make clean && \
+    make performance
+
+# Build all test suites
+RUN make tests
+
+# Create CI configuration
+RUN echo "CI_MODE=true" > /app/.ci_config && \
+    echo "COVERAGE_THRESHOLD=80" >> /app/.ci_config && \
+    echo "PERFORMANCE_THRESHOLD=5" >> /app/.ci_config && \
+    echo "TIMEOUT_SECONDS=300" >> /app/.ci_config
+
+# Set default environment variables for CI
+ENV CI=true
+ENV COVERAGE_THRESHOLD=80
+ENV PERFORMANCE_THRESHOLD=5
+ENV TIMEOUT_SECONDS=300
+ENV UNITY_VERBOSE=0
+
+# Create entrypoint script for flexible CI execution
+RUN cat > /app/ci-entrypoint.sh << 'EOF'
+#!/bin/bash
+
+# CI Entrypoint Script for AncestralClust Testing
+# Provides flexible test execution for different CI scenarios
+
+set -e
+
+# Configuration
+RESULTS_DIR="/app/results"
+TEST_SCRIPTS_DIR="/app/tests/scripts"
+CI_CONFIG="/app/.ci_config"
+
+# Source CI configuration if available
+if [[ -f "$CI_CONFIG" ]]; then
+    source "$CI_CONFIG"
+fi
+
+# Ensure results directory exists
+mkdir -p "$RESULTS_DIR"
+
+# Function to log with timestamp
+log_ci() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Main CI execution function
+run_ci_tests() {
+    local test_mode="${1:-full}"
+    
+    log_ci "Starting AncestralClust CI testing in $test_mode mode"
+    log_ci "Results will be saved to: $RESULTS_DIR"
+    
+    case "$test_mode" in
+        "quick")
+            log_ci "Running quick test suite..."
+            exec "$TEST_SCRIPTS_DIR/run_all_tests.sh" --unit-only
+            ;;
+        "unit")
+            log_ci "Running unit tests only..."
+            exec "$TEST_SCRIPTS_DIR/run_all_tests.sh" --unit-only
+            ;;
+        "integration")
+            log_ci "Running integration tests only..."
+            exec "$TEST_SCRIPTS_DIR/run_all_tests.sh" --integration
+            ;;
+        "performance")
+            log_ci "Running performance analysis..."
+            exec "$TEST_SCRIPTS_DIR/measure_performance.sh" --comprehensive --report
+            ;;
+        "coverage")
+            log_ci "Running coverage analysis..."
+            exec "$TEST_SCRIPTS_DIR/validate_coverage.sh" --generate --report
+            ;;
+        "full"|"")
+            log_ci "Running comprehensive test suite..."
+            exec "$TEST_SCRIPTS_DIR/run_all_tests.sh" --coverage --performance
+            ;;
+        *)
+            log_ci "Unknown test mode: $test_mode"
+            log_ci "Available modes: quick, unit, integration, performance, coverage, full"
+            exit 1
+            ;;
+    esac
+}
+
+# Health check function
+health_check() {
+    log_ci "Performing CI environment health check..."
+    
+    # Check binary exists
+    if [[ ! -f "/app/ancestralclust" ]]; then
+        log_ci "ERROR: AncestralClust binary not found"
+        return 1
+    fi
+    
+    # Check test executables
+    local test_files=(
+        "/app/tests/unit/test_performance"
+        "/app/tests/unit/test_thread_safety"
+    )
+    
+    for test_file in "${test_files[@]}"; do
+        if [[ ! -f "$test_file" ]]; then
+            log_ci "WARNING: Test executable not found: $test_file"
+        fi
+    done
+    
+    # Check test scripts
+    local script_files=(
+        "/app/tests/scripts/run_all_tests.sh"
+        "/app/tests/scripts/measure_performance.sh"
+        "/app/tests/scripts/validate_coverage.sh"
+    )
+    
+    for script_file in "${script_files[@]}"; do
+        if [[ ! -x "$script_file" ]]; then
+            log_ci "ERROR: Test script not executable: $script_file"
+            return 1
+        fi
+    done
+    
+    # Check test data
+    if [[ ! -f "/app/tests/fixtures/small_test.fasta" ]]; then
+        log_ci "ERROR: Test data not found"
+        return 1
+    fi
+    
+    log_ci "Health check passed"
+    return 0
+}
+
+# Parse command line arguments
+case "${1:-full}" in
+    "health"|"health-check")
+        health_check
+        ;;
+    *)
+        health_check && run_ci_tests "$1"
+        ;;
+esac
+EOF
+
+# Make entrypoint executable
+RUN chmod +x /app/ci-entrypoint.sh
+
+# Validate the build by running a quick test
+RUN ./tests/unit/test_performance || (echo "Initial test validation failed" && exit 1)
+
+# Set volume mount point for CI results
+VOLUME ["/app/results"]
+
+# Set entrypoint
+ENTRYPOINT ["/app/ci-entrypoint.sh"]
+
+# Default command runs full test suite
+CMD ["full"]
+
+# Metadata
+LABEL org.opencontainers.image.title="AncestralClust CI Testing Environment"
+LABEL org.opencontainers.image.description="Complete CI/CD testing environment for AncestralClust performance logging system"
+LABEL org.opencontainers.image.version="1.0"
+LABEL org.opencontainers.image.vendor="AncestralClust Project"
+LABEL org.opencontainers.image.licenses="MIT"
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD /app/ci-entrypoint.sh health-check

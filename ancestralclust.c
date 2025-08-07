@@ -14,6 +14,7 @@
 #include "global.h"
 #include "hashmap.h"
 #include "WFA2/wavefront_align.h"
+#include "performance.h"
 
 //struct hashmap map;
 char*** clusters;
@@ -4159,6 +4160,12 @@ void findGappedSites(int* gapped, int numbase, int numseqs, int** seqArr){
 	}
 }
 int main(int argc, char **argv){
+	// Initialize performance monitoring system
+	perf_init();
+	PERF_START_MILESTONE(PERF_MILESTONE_PROGRAM_START);
+	PERF_LOG_MEMORY("program_start");
+	PERF_LOG_CPU("program_start");
+
 	Options opt;
 	opt.number_of_clusters = -1;
 	opt.number_of_kseqs=-1;
@@ -4175,7 +4182,12 @@ int main(int argc, char **argv){
 	strcpy(opt.output_directory,"");
 	memset(opt.output_file,'\0',2000);
 	memset(opt.root,'\0',1000);
+
+	// Track option parsing phase
+	PERF_START_MILESTONE(PERF_MILESTONE_OPTION_PARSING);
 	parse_options(argc, argv, &opt);
+	PERF_END_MILESTONE(PERF_MILESTONE_OPTION_PARSING);
+	PERF_LOG_MEMORY("options_parsed");
 	if ( opt.number_of_clusters == -1 ){
 		fprintf(stderr,"Number of desired clusters is a required argument please supply the number with -b\n");
 		exit(1);
@@ -4184,11 +4196,16 @@ int main(int argc, char **argv){
 		fprintf(stderr,"Number of r sequences to be chosen at random for initial clusters is a required argument please supply the number with -r\n");
 		exit(1);
 	}
+	// Track FASTA file processing
+	PERF_START_MILESTONE(PERF_MILESTONE_FASTA_LOAD_START);
 	FILE* fasta_for_clustering;
 	if (( fasta_for_clustering = fopen(opt.fasta,"r")) == (FILE *) NULL ) fprintf(stderr,"FASTA file could not be opened.\n");
 	int number_of_sequences = 0;
 	int* fasta_specs = (int *)malloc(5*sizeof(int));
+	PERF_TRACK_ALLOC(fasta_specs, 5*sizeof(int));
 	setNumSeq(fasta_for_clustering,fasta_specs);
+	PERF_END_MILESTONE(PERF_MILESTONE_FASTA_LOAD_START);
+	PERF_LOG_MEMORY("fasta_specs_allocated");
 	printf("Number of sequences: %d\n",fasta_specs[0]);
 	//printf("Longest sequence: %d\n",fasta_specs[1]);
 	//printf("Longest name: %d\n",fasta_specs[2]);
@@ -4224,35 +4241,50 @@ int main(int argc, char **argv){
 	FILE* taxonomyFile;
 	struct hashmap taxMap;
 	if (opt.hasTaxFile==1){
+		PERF_START_MILESTONE(PERF_MILESTONE_TAXONOMY_LOAD);
 		taxonomy = (char **)malloc(fasta_specs[0]*sizeof(char *));
+		PERF_TRACK_ALLOC(taxonomy, fasta_specs[0]*sizeof(char *));
 		for(i=0; i<fasta_specs[0]; i++){
 			taxonomy[i]=(char *)malloc(FASTA_MAXLINE*sizeof(char));
+			PERF_TRACK_ALLOC(taxonomy[i], FASTA_MAXLINE*sizeof(char));
 		}
 		hashmap_init(&taxMap, hashmap_hash_string, hashmap_compare_string, 4*fasta_specs[0]);
 		if (( taxonomyFile = fopen(opt.taxonomy,"r")) == (FILE *) NULL ) fprintf(stderr,"TAXONOMY file could not be opened.\n");
 		readInTaxFile(taxonomyFile,taxonomy,taxMap);
 		fclose(taxonomyFile);
+		PERF_END_MILESTONE(PERF_MILESTONE_TAXONOMY_LOAD);
+		PERF_LOG_MEMORY("taxonomy_loaded");
 	}
 	int* assignedSeqs;
 	int* chooseK = (int *)malloc(kseqs*sizeof(int));
 	int numberOfUnAssigned=fasta_specs[0];
 	//clusters = (char***)malloc((fasta_specs[3]+1)*sizeof(char **));
+	// Track large data structure allocation
+	PERF_START_MILESTONE(PERF_MILESTONE_LARGE_ALLOCATION);
 	clusters = (char***)malloc((fasta_specs[4]+1)*sizeof(char **));
+	PERF_TRACK_ALLOC(clusters, (fasta_specs[4]+1)*sizeof(char **));
 	//char*** cluster_seqs = (char***)malloc((fasta_specs[3]+1)*sizeof(char **));
 	char*** cluster_seqs = (char***)malloc((fasta_specs[4]+1)*sizeof(char **));
+	PERF_TRACK_ALLOC(cluster_seqs, (fasta_specs[4]+1)*sizeof(char **));
 	
 	for(i=0; i<fasta_specs[4]+1; i++){
 		clusters[i]=(char **)malloc(kseqs*sizeof(char *));
+		PERF_TRACK_ALLOC(clusters[i], kseqs*sizeof(char *));
 		cluster_seqs[i]=(char **)malloc(kseqs*sizeof(char *));
+		PERF_TRACK_ALLOC(cluster_seqs[i], kseqs*sizeof(char *));
 		for(j=0; j<kseqs; j++){
 			clusters[i][j]=(char *)malloc((fasta_specs[2]+1)*sizeof(char));
+			PERF_TRACK_ALLOC(clusters[i][j], (fasta_specs[2]+1)*sizeof(char));
 			//clusters[i][j][0]='\0';
 			memset(clusters[i][j],'\0',fasta_specs[2]+1);
 			cluster_seqs[i][j]=(char *)malloc((fasta_specs[1]+1)*sizeof(char));
+			PERF_TRACK_ALLOC(cluster_seqs[i][j], (fasta_specs[1]+1)*sizeof(char));
 			//cluster_seqs[i][j][0]='\0';
 			memset(cluster_seqs[i][j],'\0',fasta_specs[1]+1);
 		}
 	}
+	PERF_END_MILESTONE(PERF_MILESTONE_LARGE_ALLOCATION);
+	PERF_LOG_MEMORY("cluster_structures_allocated");
 	int numberOfNodesToCut=0;
 	int numberOfSequencesLeft=fasta_specs[0];
 	int starting_number_of_clusters=1;
@@ -4301,6 +4333,8 @@ int main(int argc, char **argv){
 	}
 	printf("kseq is %d\n",kseqs);
 	printf("number_of_clusters is %d\n",opt.number_of_clusters);
+	// Track random sequence selection
+	PERF_START_MILESTONE_LABELED(PERF_MILESTONE_CLUSTER_INITIALIZATION, "random_selection");
 	struct timespec tstart={0,0}, tend={0,0};
 	clock_gettime(CLOCK_MONOTONIC, &tstart);
 	printf("Choosing %d sequences at random...\n",kseqs);
@@ -4355,10 +4389,17 @@ int main(int argc, char **argv){
 	//}
 	clock_gettime(CLOCK_MONOTONIC, &tend);
 	printf("Took %lf seconds\n",((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+	PERF_END_MILESTONE_LABELED(PERF_MILESTONE_CLUSTER_INITIALIZATION, "random_selection");
+	
+	// Track distance matrix allocation
+	PERF_START_MILESTONE(PERF_MILESTONE_MEMORY_ALLOC);
 	distMat = (double **)malloc((kseqs+1)*sizeof(double *));
+	PERF_TRACK_ALLOC(distMat, (kseqs+1)*sizeof(double *));
 	for(i=0; i<kseqs+1; i++){
 		distMat[i] = (double *)malloc((kseqs+1)*sizeof(double));
+		PERF_TRACK_ALLOC(distMat[i], (kseqs+1)*sizeof(double));
 	}
+	PERF_END_MILESTONE(PERF_MILESTONE_MEMORY_ALLOC);
 	for(i=0; i<kseqs+1; i++){
 		for(j=0; j<kseqs+1; j++){
 			distMat[i][j] = 0;
@@ -4373,16 +4414,22 @@ int main(int argc, char **argv){
 	//	strcpy(seqsInCluster[i],sequences[chooseK[i]]);
 	//}
 	printf("Creating distance matrix...\n");
+	PERF_START_MILESTONE(PERF_MILESTONE_DISTANCE_MATRIX_START);
 	clock_gettime(CLOCK_MONOTONIC, &tstart);
 	if ( opt.use_nw ==0 ){
+		PERF_START_MILESTONE_LABELED(PERF_MILESTONE_DISTANCE_PTHREAD_SECTION, "WFA2_threaded");
 		createDistMat_WFA(cluster_seqs[0],distMat,kseqs,opt.numthreads);
+		PERF_END_MILESTONE_LABELED(PERF_MILESTONE_DISTANCE_PTHREAD_SECTION, "WFA2_threaded");
 	}else{
+		PERF_START_MILESTONE_LABELED(PERF_MILESTONE_NEEDLEMAN_WUNSCH, "needleman_wunsch");
 		createDistMat(cluster_seqs[0],distMat,kseqs,fasta_specs);
+		PERF_END_MILESTONE_LABELED(PERF_MILESTONE_NEEDLEMAN_WUNSCH, "needleman_wunsch");
 	}
 	//for(i=0; i<MAXNUMBEROFKSEQS; i++){
 	//	free(seqsInCluster[i]);
 	//}
 	//free(seqsInCluster);
+	PERF_LOG_MEMORY("distance_matrix_computed");
 	double** distMatForAVG = (double **)malloc((kseqs)*sizeof(double *));
 	for(i=0; i<kseqs; i++){
 		distMatForAVG[i] = (double *)malloc((kseqs)*sizeof(double));
@@ -4405,6 +4452,7 @@ int main(int argc, char **argv){
 	//}
 	clock_gettime(CLOCK_MONOTONIC, &tend);
 	printf("Took %lf seconds\n",((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) - ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+	PERF_END_MILESTONE(PERF_MILESTONE_DISTANCE_MATRIX_START);
 	//int* clusterSize = (int *)malloc((fasta_specs[3]+1)*sizeof(int));
 	int* clusterSize = (int *)malloc((fasta_specs[4]+1)*sizeof(int));
 	clusterSize[0]=kseqs;
@@ -4424,11 +4472,20 @@ int main(int argc, char **argv){
 			tree[i][j].clusterNumber=0;
 		}
 	}
+	// Track tree construction
+	PERF_START_MILESTONE(PERF_MILESTONE_TREE_CONSTRUCTION_START);
 	int root = NJ(tree,distMat,kseqs,0,0);
+	PERF_END_MILESTONE(PERF_MILESTONE_TREE_CONSTRUCTION_START);
+	
+	// Track distance matrix deallocation
+	PERF_START_MILESTONE(PERF_MILESTONE_MEMORY_FREE);
 	for(i=0; i<kseqs+1; i++){
+		PERF_TRACK_FREE(distMat[i]);
 		free(distMat[i]);
 	}
+	PERF_TRACK_FREE(distMat);
 	free(distMat);
+	PERF_END_MILESTONE(PERF_MILESTONE_MEMORY_FREE);
 	tree[0][root].bl=0;
 	get_number_descendants(tree,root,0);
 	assignDepth(tree,tree[0][root].up[0],tree[0][root].up[1],1,0);
@@ -4593,6 +4650,8 @@ int main(int argc, char **argv){
 		free(distMatForAVG[i]);
 	}
 	free(distMatForAVG);
+	// Track output generation
+	PERF_START_MILESTONE(PERF_MILESTONE_OUTPUT_WRITE);
 	printf("printing initial clusters...\n");
 	if ( opt.output_fasta==1 ){
 		printInitialClusters(starting_number_of_clusters,numberOfNodesToCut,clusterSize,opt,kseqs,taxMap,opt.hasTaxFile,clusters,cluster_seqs);
@@ -4601,19 +4660,25 @@ int main(int argc, char **argv){
 		printf("saving clustr format...\n");
 		if (numberOfUnAssigned == fasta_specs[0]){
 			clstr = (char ***)malloc(MAXNUMBEROFCLUSTERS*sizeof(char **));
+			PERF_TRACK_ALLOC(clstr, MAXNUMBEROFCLUSTERS*sizeof(char **));
 			clstr_lengths = (int **)malloc(MAXNUMBEROFCLUSTERS*sizeof(int *));
+			PERF_TRACK_ALLOC(clstr_lengths, MAXNUMBEROFCLUSTERS*sizeof(int *));
 			for(i=0; i<MAXNUMBEROFCLUSTERS; i++){
 				clstr[i] = (char **)malloc(fasta_specs[0]*sizeof(char *));
+				PERF_TRACK_ALLOC(clstr[i], fasta_specs[0]*sizeof(char *));
 				clstr_lengths[i] = (int *)malloc(fasta_specs[0]*sizeof(int));
+				PERF_TRACK_ALLOC(clstr_lengths[i], fasta_specs[0]*sizeof(int));
 				for(j=0; j<fasta_specs[0]; j++){
 					clstr_lengths[i][j] = -1;
 					clstr[i][j] = (char *)malloc((fasta_specs[2]+1)*sizeof(char));
+					PERF_TRACK_ALLOC(clstr[i][j], (fasta_specs[2]+1)*sizeof(char));
 					memset(clstr[i][j],'\0',fasta_specs[2]+1);
 				}
 			}
 		}
 		printInitialClusters_CLSTR(starting_number_of_clusters,numberOfNodesToCut,clusterSize,opt,kseqs,fasta_specs[1],clstr,clstr_lengths,cluster_seqs);
 	}
+	PERF_END_MILESTONE(PERF_MILESTONE_OUTPUT_WRITE);
 	//if (numberOfUnAssigned == kseqs){ break;}
 	if ( numberOfNodesToCut > 0 ){
 		lastTime = average_distance;
@@ -4664,7 +4729,11 @@ int main(int argc, char **argv){
 	}
 	//allocateMemForTreeArr(numberOfNodesToCut-1,clusterSize,treeArr,kseqs);
 	int* rootArr = (int *)malloc(numberOfNodesToCut*sizeof(int));
+	// Track tree construction for individual clusters
+	PERF_START_MILESTONE_LABELED(PERF_MILESTONE_TREE_CONSTRUCTION_START, "cluster_trees");
 	createTreesForClusters(treeArr,numberOfNodesToCut,clusterSize,cluster_seqs,rootArr,opt.numthreads);
+	PERF_END_MILESTONE_LABELED(PERF_MILESTONE_TREE_CONSTRUCTION_START, "cluster_trees");
+	PERF_LOG_MEMORY("cluster_trees_built");
 	for(i=0; i<numberOfNodesToCut-1; i++){
 		if (clusterSize[i+1] > 3){
 			for(j=0; j<clusterSize[i+1]; j++){
@@ -4694,9 +4763,12 @@ int main(int argc, char **argv){
 			first_time=1;
 		}
 		if (clusterSize[i+1] > 3){
+			PERF_START_MILESTONE_LABELED(PERF_MILESTONE_KALIGN_EXECUTION, "cluster_alignment");
 			int** seqArr= (int **)malloc(clusterSize[i+1]*sizeof(int *));
+			PERF_TRACK_ALLOC(seqArr, clusterSize[i+1]*sizeof(int *));
 			//main_kalign(1,kalign_args,clusterSize[i+1],clusters[i+1],cluster_seqs[i+1],seqArr,numbase,i);
 			main_kalign(clusterSize[i+1],clusters[i+1],cluster_seqs[i+1],seqArr,numbase,i,opt.numthreads);
+			PERF_END_MILESTONE_LABELED(PERF_MILESTONE_KALIGN_EXECUTION, "cluster_alignment");
 			int* gapped = (int*)malloc(numbase[i]*sizeof(int));
 			for(j=0; j<numbase[i]; j++){
 				gapped[j]=0;
@@ -5083,14 +5155,18 @@ int main(int argc, char **argv){
 	int next=0;
 	int update_initial_cluster = kseqs;
 	int largest_cluster = findLargestCluster(clusterSize,numberOfNodesToCut);
+	// Track cluster assignment phase
+	PERF_START_MILESTONE(PERF_MILESTONE_CLUSTER_ASSIGNMENT);
 	clock_gettime(CLOCK_MONOTONIC, &tstart);
 	printf("Starting to assign sequences to clusters\n");
 	if (numberOfUnAssigned == fasta_specs[0]){
 		assignedSeqs = (int *)malloc(sizeof(int)*fasta_specs[0]);
+		PERF_TRACK_ALLOC(assignedSeqs, sizeof(int)*fasta_specs[0]);
 		for (i=0; i<fasta_specs[0]; i++){
 			assignedSeqs[i]=-1;
 		}
 	}
+	PERF_LOG_MEMORY("assignment_structures_ready");
 	for(i=0; i<kseqs; i++){
 		assignedSeqs[chooseK[i]]=1;
 	}
@@ -5206,6 +5282,8 @@ int main(int argc, char **argv){
 			}
 			j=j+divideFile;
 		}
+		// Track pthread-based cluster assignment
+		PERF_START_MILESTONE_LABELED(PERF_MILESTONE_DISTANCE_PTHREAD_SECTION, "assignment_threads");
 		for(i=0; i<opt.numthreads; i++){
 			size_t default_stack_size;
 			pthread_attr_t stack_size_custom_attr;
@@ -5220,6 +5298,7 @@ int main(int argc, char **argv){
 		for(i=0; i<opt.numthreads; i++){
 			pthread_join(threads[i], NULL);
 		}
+		PERF_END_MILESTONE_LABELED(PERF_MILESTONE_DISTANCE_PTHREAD_SECTION, "assignment_threads");
 		for(i=0; i<opt.numthreads; i++){
 			if (opt.output_fasta==1){
 				printClusters(starting_number_of_clusters,mstr[i].str->number_of_clusters,opt,taxonomy,mstr[i],mstr[i].numAssigned,taxMap,opt.hasTaxFile,fasta_specs,numberToAssign);
@@ -5390,6 +5469,8 @@ int main(int argc, char **argv){
 	numberOfUnAssigned=countNumUnassigned(sequencesToClusterLater,fasta_specs,kseqs);
 	numberOfSequencesLeft=numberOfUnAssigned;
 	printf("number of sequences left: %d\n",numberOfUnAssigned);
+	PERF_LOG_ITERATION(0, (double)numberOfUnAssigned / (double)fasta_specs[0]);
+	PERF_LOG_MEMORY("iteration_complete");
 	//for(i=0; i<numberOfUnAssigned; i++){
 	//	strcpy(seqNames[i],sequencesToClusterLater[i]);
 	//	strcpy(sequences[i],actualSeqsToClusterLater[i]);
@@ -5436,16 +5517,23 @@ int main(int argc, char **argv){
 		free(actualSeqsToPrint);
 	}
 	}
+	// Track final output and cleanup
+	PERF_START_MILESTONE(PERF_MILESTONE_CLEANUP);
 	if (opt.clstr_format==1){
 		printCLSTR(opt,clstr,clstr_lengths,fasta_specs[0],starting_number_of_clusters);
 		for(i=0; i<MAXNUMBEROFCLUSTERS; i++){
 			for(j=0; j<fasta_specs[0]; j++){
+				PERF_TRACK_FREE(clstr[i][j]);
 				free(clstr[i][j]);
 			}
+			PERF_TRACK_FREE(clstr_lengths[i]);
 			free(clstr_lengths[i]);
+			PERF_TRACK_FREE(clstr[i]);
 			free(clstr[i]);
 		}
+		PERF_TRACK_FREE(clstr);
 		free(clstr);
+		PERF_TRACK_FREE(clstr_lengths);
 		free(clstr_lengths);
 	}
 		//freeMemForAlign(DATA,fasta_specs[1],mult);
@@ -5454,7 +5542,20 @@ int main(int argc, char **argv){
 	if (opt.hasTaxFile==1){
 		freeSequences(fasta_specs[0],taxonomy);
 	}
+	PERF_TRACK_FREE(fasta_specs);
 	free(fasta_specs);
+	PERF_TRACK_FREE(chooseK);
 	free(chooseK);
 	//hashmap_destroy(&map);
+	PERF_END_MILESTONE(PERF_MILESTONE_CLEANUP);
+	
+	// End program milestone and generate performance summary
+	PERF_END_MILESTONE(PERF_MILESTONE_PROGRAM_START);
+	PERF_LOG_MEMORY("program_end");
+	PERF_LOG_CPU("program_end");
+	
+	// Generate and output performance summary
+	perf_print_summary();
+	perf_export_csv("ancestralclust_performance.csv");
+	perf_cleanup();
 }
