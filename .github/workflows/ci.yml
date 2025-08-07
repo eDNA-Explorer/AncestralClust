@@ -15,9 +15,9 @@ name: AncestralClust CI/CD Pipeline
 # Trigger on push to main branches and all pull requests
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [ main, master, develop, performance, experimental ]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [ main, master, develop, performance, experimental ]
 
 # Allow manual workflow dispatch
   workflow_dispatch:
