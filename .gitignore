@@ -1,0 +1,172 @@
+# AncestralClust .gitignore
+# Comprehensive exclusion of build artifacts, temporary files, and system-specific files
+
+# Main executable
+ancestralclust
+
+# Object files and libraries
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.lib
+
+# Compiler and build artifacts
+*.gcda
+*.gcno
+*.gcov
+*.prof
+*.profdata
+
+# Debug symbols (macOS)
+*.dSYM/
+*.dSYM/**/*
+
+# Test executables
+tests/unit/test_performance
+tests/unit/test_thread_safety
+tests/integration/test_ancestralclust_integration
+tests/stress/test_performance_stress
+tests/test_runner
+tests/basic_thread_test
+
+# Test results and generated files
+tests/results/
+tests/output/
+ci-results/
+docker-results/
+
+# Coverage reports
+coverage/
+*.info
+lcov.info
+coverage.xml
+htmlcov/
+
+# Performance logs and CSV output
+*.csv
+*_performance.csv
+ancestralclust_performance.csv
+performance_*.log
+
+# System-specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor and IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.tmp
+.#*
+
+# Docker artifacts
+.dockerignore
+
+# Local development files
+.env
+.env.local
+.env.*.local
+
+# Temporary files
+*.temp
+*.tmp
+/tmp/
+temp/
+
+# Log files
+*.log
+logs/
+
+# User-specific Claude Code configuration
+.claude/
+
+# Backup files
+*.bak
+*.backup
+*~
+
+# Core dumps
+core
+core.*
+
+# Memory debugging files
+valgrind-*.log
+*.memcheck
+
+# Profiling output
+gmon.out
+callgrind.out.*
+perf.data*
+
+# Build directories
+build/
+dist/
+bin/
+
+# Configuration files that might contain sensitive data
+config.local.*
+*.secret
+
+# Large test data files (uncomment if you have large datasets)
+# *.fastq
+# *.fq
+# large_*.fasta
+
+# OS generated files
+.fseventsd
+.LSOverride
+.Spotlight-V100
+.Trashes
+.DocumentRevisions-V100
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDouble
+.LSOverride
+
+# Network Trash Folder
+.AppleDB
+.AppleDesktop
+
+# Python cache (if any Python tools are added)
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Node modules (if any Node.js tools are added)
+node_modules/
+npm-debug.log*
+
+# Rust artifacts (if any Rust components are added)
+target/
+Cargo.lock
+
+# Go artifacts (if any Go components are added)
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Archive files
+*.zip
+*.tar.gz
+*.tgz
+*.tar.bz2
+*.tbz2
+*.tar.xz
+*.txz
+
+# Package files
+*.deb
+*.rpm
+*.pkg
+*.dmg
