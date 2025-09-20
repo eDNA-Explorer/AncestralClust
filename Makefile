@@ -9,7 +9,7 @@ DBGCFLAGS = -g -w -fopenmp
 # -lm links the math library
 #LIBS = -lm -lpthread -lz
 LIBS = -lm -pthread -lz -std=gnu99
-OPENMP = -fopenmp
+OPENMP = -fopenmp -Wno-error=implicit-function-declaration -Wno-error=builtin-declaration-mismatch -w
 OPTIMIZATION = -O3 -march=native
 #sources
 SOURCES = ancestralclust.c options.c math.c opt.c
