@@ -1747,7 +1747,7 @@ int perform_WFA_alignment(cigar_t* const cigar, mm_allocator_t* mm_allocator,cha
 					text_alg[alg_pos++] = seq2[text_pos];
 				}else{
 					pattern_alg[alg_pos] = seq1[pattern_pos];
-					ops_alg[alg_pos] = "|";
+					ops_alg[alg_pos] = '|';
 					text_alg[alg_pos++] = seq2[text_pos];
 				}
 				pattern_pos++; text_pos++;
@@ -5421,7 +5421,7 @@ int main(int argc, char **argv){
 			actualSeqsToPrint[i] = (char *)malloc((fasta_specs[1]+1)*sizeof(char));
 		}
 		if (opt.output_fasta==1){
-			gzFile *fasta_to_assign = gzopen(opt.fasta,"r");
+			gzFile fasta_to_assign = gzopen(opt.fasta,"r");
 			FILE* taxonomy_file;
 			printLessThanFour(fasta_to_assign, numberOfUnAssigned, opt, starting_number_of_clusters, taxonomy_file, fasta_specs[2], fasta_specs[1]+1,sequencesToClusterLater,seqsToPrint,actualSeqsToPrint);
 		}
